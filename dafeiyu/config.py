@@ -183,6 +183,33 @@ class Config:
     max_reply_chars: int = DEFAULT_MAX_REPLY_CHARS
     db_path: Path = field(default_factory=lambda: APP_HOME / "data" / "dafeiyu.db")
 
+    # 夜间自主（生物钟）
+    night_enabled: bool = True
+    night_windows: str = "20:00-24:00"
+    night_wakes: int = 1
+    night_skip_chance: float = 0.3
+    night_min_gap_minutes: int = 10
+    night_max_videos: int = 5
+    night_deep_read: int = 2
+    night_initial_delay: float = 45.0
+
+    # 分享 / 日记
+    share_enabled: bool = True
+    share_min_score: int = 13
+    share_daily_limit: int = 3
+    silent_after_days: int = 3
+    silent_stop_days: int = 7
+    diary_push: bool = True
+    diary_dir: Path = field(default_factory=lambda: APP_HOME / "diary")
+
+    # 请求保护
+    traffic_guard_enabled: bool = True
+    bili_read_hourly: int = 600
+    bili_read_daily: int = 3000
+    bili_write_hourly: int = 12
+    bili_write_daily: int = 30
+    bili_write_gap_seconds: int = 120
+
     # 主动行为
     proactive_enabled: bool = True
     proactive_min_minutes: int = 50
@@ -267,6 +294,31 @@ class Config:
             bili_cookie=_get(env, "BILI_COOKIE", "") or "",
             bili_user_agent=_get(env, "BILI_USER_AGENT", DEFAULT_UA) or DEFAULT_UA,
             bili_min_interval=_as_float(env, "BILI_MIN_INTERVAL", 0.6),
+            night_enabled=_as_bool(env, "NIGHT_ENABLED", True),
+            night_windows=_get(env, "NIGHT_WINDOWS", "20:00-24:00") or "20:00-24:00",
+            night_wakes=_as_int(env, "NIGHT_WAKES", 1),
+            night_skip_chance=_as_float(env, "NIGHT_SKIP_CHANCE", 0.3),
+            night_min_gap_minutes=_as_int(env, "NIGHT_MIN_GAP_MINUTES", 10),
+            night_max_videos=_as_int(env, "NIGHT_MAX_VIDEOS", 5),
+            night_deep_read=_as_int(env, "NIGHT_DEEP_READ", 2),
+            night_initial_delay=_as_float(env, "NIGHT_INITIAL_DELAY", 45.0),
+            share_enabled=_as_bool(env, "SHARE_ENABLED", True),
+            share_min_score=_as_int(env, "SHARE_MIN_SCORE", 13),
+            share_daily_limit=_as_int(env, "SHARE_DAILY_LIMIT", 3),
+            silent_after_days=_as_int(env, "SILENT_AFTER_DAYS", 3),
+            silent_stop_days=_as_int(env, "SILENT_STOP_DAYS", 7),
+            diary_push=_as_bool(env, "DIARY_PUSH", True),
+            diary_dir=(
+                _resolve_path(_get(env, "DIARY_DIR"))
+                if _get(env, "DIARY_DIR")
+                else APP_HOME / "diary"
+            ),
+            traffic_guard_enabled=_as_bool(env, "TRAFFIC_GUARD_ENABLED", True),
+            bili_read_hourly=_as_int(env, "BILI_READ_HOURLY", 600),
+            bili_read_daily=_as_int(env, "BILI_READ_DAILY", 3000),
+            bili_write_hourly=_as_int(env, "BILI_WRITE_HOURLY", 12),
+            bili_write_daily=_as_int(env, "BILI_WRITE_DAILY", 30),
+            bili_write_gap_seconds=_as_int(env, "BILI_WRITE_GAP_SECONDS", 120),
             persona_name=_get(env, "PERSONA_NAME", DEFAULT_PERSONA_NAME) or DEFAULT_PERSONA_NAME,
             persona_extra=_get(env, "PERSONA_EXTRA", "") or "",
             persona_file=(
@@ -335,6 +387,20 @@ class Config:
             self.browse_limit = 50
         if self.browse_interval_minutes < 5:
             self.browse_interval_minutes = 5
+        self.night_wakes = max(0, min(self.night_wakes, 12))
+        self.night_skip_chance = max(0.0, min(self.night_skip_chance, 1.0))
+        self.night_min_gap_minutes = max(1, min(self.night_min_gap_minutes, 180))
+        self.night_max_videos = max(1, min(self.night_max_videos, 20))
+        self.night_deep_read = max(1, min(self.night_deep_read, 5))
+        self.share_min_score = max(0, min(self.share_min_score, 20))
+        self.share_daily_limit = max(0, min(self.share_daily_limit, 10))
+        self.silent_after_days = max(1, min(self.silent_after_days, 60))
+        self.silent_stop_days = max(self.silent_after_days + 1, min(self.silent_stop_days, 120))
+        self.bili_read_hourly = max(1, min(self.bili_read_hourly, 10000))
+        self.bili_read_daily = max(1, min(self.bili_read_daily, 50000))
+        self.bili_write_hourly = max(1, min(self.bili_write_hourly, 200))
+        self.bili_write_daily = max(1, min(self.bili_write_daily, 1000))
+        self.bili_write_gap_seconds = max(0, min(self.bili_write_gap_seconds, 3600))
 
     @property
     def proactive_session_id(self) -> str | None:

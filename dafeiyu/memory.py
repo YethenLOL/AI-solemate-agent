@@ -90,6 +90,16 @@ CREATE TABLE IF NOT EXISTS token_usage (
     estimated INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at);
+
+CREATE TABLE IF NOT EXISTS shares (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bvid TEXT NOT NULL,
+    score INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shares_created ON shares(created_at);
+CREATE INDEX IF NOT EXISTS idx_shares_bvid ON shares(bvid, created_at);
 """
 
 
@@ -453,6 +463,36 @@ class Memory:
     def count_usage(self) -> int:
         rows = self._query("SELECT COUNT(*) AS n FROM token_usage")
         return int(rows[0]["n"]) if rows else 0
+
+    # ------------------------------------------------------------------ 分享
+    def record_share(
+        self,
+        bvid: str,
+        score: int = 0,
+        reason: str = "",
+        created_at: float | None = None,
+    ) -> None:
+        self._execute(
+            "INSERT INTO shares(bvid, score, reason, created_at) VALUES (?, ?, ?, ?)",
+            (bvid, int(score), reason, time.time() if created_at is None else created_at),
+        )
+
+    def share_count_since(self, since: float) -> int:
+        rows = self._query("SELECT COUNT(*) AS n FROM shares WHERE created_at >= ?", (since,))
+        return int(rows[0]["n"]) if rows else 0
+
+    def has_shared_since(self, bvid: str, since: float) -> bool:
+        rows = self._query(
+            "SELECT 1 FROM shares WHERE bvid = ? AND created_at >= ? LIMIT 1", (bvid, since)
+        )
+        return bool(rows)
+
+    def recent_shares(self, limit: int = 10) -> list[dict[str, Any]]:
+        rows = self._query(
+            "SELECT bvid, score, reason, created_at FROM shares ORDER BY id DESC LIMIT ?",
+            (max(1, limit),),
+        )
+        return [dict(row) for row in rows]
 
 
 def _video_row(row: sqlite3.Row) -> dict[str, Any]:

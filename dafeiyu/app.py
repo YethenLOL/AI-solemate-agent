@@ -20,14 +20,18 @@ from .agent import Agent
 from .bilibili import BilibiliClient
 from .computer import ComputerController
 from .config import APP_HOME, Config, ConfigError
+from .dayplan import plan_text
+from .diary import DiaryStore
 from .dsh import DSHClient
 from .learning import LearningLoop
 from .llm import LLMClient
 from .memory import Memory
+from .night import NightLoop
 from .onebot import OneBotClient
 from .persona import PersonaCard, build_system_prompt
 from .router import Router
 from .scheduler import BrowseLoop, ProactiveScheduler
+from .traffic import guard_from_config
 from .screen import ScreenReader
 from .skills import SkillStore
 
@@ -73,11 +77,13 @@ def build_components(config: Config) -> dict[str, object]:
             "Referer": "https://www.bilibili.com/",
         },
     )
+    traffic = guard_from_config(config, APP_HOME / "data" / "traffic.json")
     bili = BilibiliClient(
         cookie=config.bili_cookie,
         user_agent=config.bili_user_agent,
         min_interval=config.bili_min_interval,
         http_client=http_client,
+        traffic=traffic,
     )
     llm = LLMClient(
         base_url=config.llm_base_url,
@@ -131,6 +137,17 @@ def build_components(config: Config) -> dict[str, object]:
     learning = LearningLoop(
         config=config, bili=bili, llm=learning_llm, memory=memory, skills=skills
     )
+    diary = DiaryStore(config.diary_dir)
+    night = NightLoop(
+        config=config,
+        bili=bili,
+        agent=agent,
+        bot=bot,
+        memory=memory,
+        llm=learning_llm,
+        skills=skills,
+        diary=diary,
+    )
     router = Router(
         config=config,
         agent=agent,
@@ -152,6 +169,9 @@ def build_components(config: Config) -> dict[str, object]:
         "agent": agent,
         "skills": skills,
         "learning": learning,
+        "night": night,
+        "diary": diary,
+        "traffic": traffic,
         "activity": activity,
         "bot": bot,
         "scheduler": scheduler,
@@ -169,6 +189,8 @@ async def run_app(config: Config, *, stop_event: asyncio.Event | None = None) ->
     browse: BrowseLoop = parts["browse"]  # type: ignore[assignment]
     scheduler: ProactiveScheduler = parts["scheduler"]  # type: ignore[assignment]
     learning: LearningLoop = parts["learning"]  # type: ignore[assignment]
+    night: NightLoop = parts["night"]  # type: ignore[assignment]
+    diary: DiaryStore = parts["diary"]  # type: ignore[assignment]
     learning_llm = parts["learning_llm"]
     chat_llm = parts["chat_llm"]
     activity: ActivityMonitor = parts["activity"]  # type: ignore[assignment]
@@ -189,6 +211,15 @@ async def run_app(config: Config, *, stop_event: asyncio.Event | None = None) ->
         config.learning_interval_minutes,
         skills.count(),
     )
+    log.info(
+        "夜间自主：%s；作息 %s；分享 %s（≥%d 分，每天≤%d）",
+        "开" if config.night_enabled else "关",
+        config.night_windows,
+        "开" if config.share_enabled else "关",
+        config.share_min_score,
+        config.share_daily_limit,
+    )
+    log.info("日记目录：%s；当前计划：%s", diary.directory, plan_text(night.current_plan() or None))
     if dsh_client := (learning_llm if isinstance(learning_llm, DSHClient) else None):
         log.info("DSH 学习运行时：%s", dsh_client.status())
     if config.dsh_chat and isinstance(chat_llm, DSHClient):
@@ -209,6 +240,7 @@ async def run_app(config: Config, *, stop_event: asyncio.Event | None = None) ->
         asyncio.create_task(scheduler.run(), name="proactive"),
         asyncio.create_task(activity.run(), name="activity"),
         asyncio.create_task(learning.run(), name="learning"),
+        asyncio.create_task(night.run(), name="night"),
     ]
     try:
         await stop.wait()
@@ -317,11 +349,13 @@ async def _learning_action(config: Config, action) -> bool:
         memory.record_usage(**payload)
 
     http_client = httpx.AsyncClient(timeout=30.0)
+    traffic = guard_from_config(config, APP_HOME / "data" / "traffic.json")
     bili = BilibiliClient(
         cookie=config.bili_cookie,
         user_agent=config.bili_user_agent,
         min_interval=config.bili_min_interval,
         http_client=http_client,
+        traffic=traffic,
     )
     llm = LLMClient(
         base_url=config.llm_base_url,
@@ -472,11 +506,13 @@ async def persona_test(config: Config, message: str) -> bool:
             "Referer": "https://www.bilibili.com/",
         },
     )
+    traffic = guard_from_config(config, APP_HOME / "data" / "traffic.json")
     bili = BilibiliClient(
         cookie=config.bili_cookie,
         user_agent=config.bili_user_agent,
         min_interval=config.bili_min_interval,
         http_client=http_client,
+        traffic=traffic,
     )
     llm = LLMClient(
         base_url=config.llm_base_url,

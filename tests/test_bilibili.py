@@ -11,6 +11,7 @@ from dafeiyu.bilibili import (
     extract_bvid,
     format_duration,
     parse_duration,
+    summarize_danmaku,
 )
 
 IMG_KEY = "7cd084941338484aae1ad9425b84077c"
@@ -442,3 +443,24 @@ async def test_history_requires_cookie_and_parses_items() -> None:
     finally:
         await client.aclose()
         await http_client.aclose()
+
+
+def test_summarize_danmaku_buckets_and_hotspots() -> None:
+    xml = (
+        '<i><d p="5.0,1,25,16777215">来了</d>'
+        '<d p="15.0,1,25,16777215">来了</d>'
+        '<d p="70.0,1,25,16777215">这步很关键</d>'
+        '<d p="130.0,1,25,16777215">哈哈哈</d></i>'
+    )
+    summary = summarize_danmaku(xml, duration=180)
+
+    assert summary.total == 4
+    assert summary.per_minute == [2, 1, 1]
+    assert [item["开始秒"] for item in summary.hot] == [0, 60, 120]
+    assert summary.hot[0]["代表弹幕"] == ["来了"]
+    assert summary.to_dict()["总数"] == 4
+
+
+def test_summarize_danmaku_handles_bad_payload() -> None:
+    assert summarize_danmaku("not xml").total == 0
+    assert summarize_danmaku("").total == 0

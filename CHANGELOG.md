@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Night routine inspired by dsh-bili-whale: random wake windows with a skip chance, preference + danmaku-density ranking, deep reads (subtitles/comments/danmaku hotspots), score-gated sharing (≤3/day, same BV once per 7 days, silence decay), two diaries, and a traffic guard with read/write budgets plus escalating 412 pauses.
+- GUI diary tab and night schedule status.
 - Skill distillation now produces actionable cards: structured JSON (tools, websites, prerequisites, steps with commands, verification, pitfalls, references) rendered to Markdown, with tool names and links stored in frontmatter for search.
 - Token usage panel on the overview tab: per-call recording (exact provider usage, or a local estimate for DSH runs) with day / week / month totals and a bar chart.
 - Learning progress is now logged per video (`学习 i/n`, skip reason, `生成技能`), so the GUI log tab and `tail -f` show what 奥米 is doing in real time.

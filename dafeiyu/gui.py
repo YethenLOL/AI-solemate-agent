@@ -39,6 +39,8 @@ from .app import (
 )
 from .config import APP_HOME as CONFIG_HOME
 from .config import Config, ConfigError
+from .dayplan import plan_text
+from .diary import DiaryStore
 from .llm import LLMClient
 from .memory import Memory
 from .persona import PersonaCard, build_system_prompt
@@ -177,6 +179,14 @@ class DafeiyuApp(tk.Tk):
         self.var_persona_stats = tk.StringVar(value="")
         self.var_test_message = tk.StringVar(value="在吗，今天有点累")
         self.var_show_key = tk.BooleanVar(value=False)
+        self.var_night = tk.BooleanVar(value=True)
+        self.var_night_windows = tk.StringVar(value="20:00-24:00")
+        self.var_night_wakes = tk.StringVar(value="1")
+        self.var_night_skip = tk.StringVar(value="0.3")
+        self.var_share = tk.BooleanVar(value=True)
+        self.var_share_min_score = tk.StringVar(value="13")
+        self.var_diary_push = tk.BooleanVar(value=True)
+        self.var_night_status = tk.StringVar(value="")
         self.var_usage_period = tk.StringVar(value="day")
         self.var_usage_total = tk.StringVar(value="—")
         self.var_usage_detail = tk.StringVar(value="还没有记录")
@@ -195,6 +205,7 @@ class DafeiyuApp(tk.Tk):
         self._build_config(notebook)
         self._build_persona(notebook)
         self._build_skills(notebook)
+        self._build_diary(notebook)
         self._build_logs(notebook)
         self._build_help(notebook)
 
@@ -369,7 +380,21 @@ class DafeiyuApp(tk.Tk):
 
     def _usage_tick(self) -> None:
         self.refresh_usage()
+        self.refresh_night_status()
         self.after(30_000, self._usage_tick)
+
+    def refresh_night_status(self) -> None:
+        try:
+            config = Config.from_env(require_llm=False)
+            memory = Memory(config.db_path).connect()
+            try:
+                plan = memory.get_state("night_plan")
+            finally:
+                memory.close()
+            self.var_night_status.set(f"生物钟：{plan_text(plan)}")
+        except Exception as exc:
+            log.debug("读取生物钟状态失败：%s", exc)
+            self.var_night_status.set("生物钟：读取失败")
 
     def _build_config(self, notebook: ttk.Notebook) -> None:
         frame = ttk.Frame(notebook, padding=18)
@@ -386,6 +411,10 @@ class DafeiyuApp(tk.Tk):
             ("OneBot WS 地址", self.var_ws_url, "plain"),
             ("OneBot Token", self.var_token, "token"),
             ("B 站 Cookie（含 SESSDATA）", self.var_cookie, "token"),
+            ("作息窗口（如 20:00-24:00x2）", self.var_night_windows, "plain"),
+            ("每天醒来次数", self.var_night_wakes, "plain"),
+            ("今天不想看概率（0-1）", self.var_night_skip, "plain"),
+            ("分享最低分（0-20）", self.var_share_min_score, "plain"),
         ]
         for index, (label, variable, kind) in enumerate(rows):
             ttk.Label(form, text=label).grid(row=index, column=0, sticky="w", pady=6, padx=(0, 12))
@@ -411,7 +440,10 @@ class DafeiyuApp(tk.Tk):
         ttk.Checkbutton(checks, text="B 站学习", variable=self.var_learning).pack(side="left", padx=(0, 18))
         ttk.Checkbutton(checks, text="DSH 本地学习运行时", variable=self.var_dsh).pack(side="left", padx=(0, 18))
         ttk.Checkbutton(checks, text="DSH 作为聊天大脑", variable=self.var_dsh_chat).pack(side="left", padx=(0, 18))
-        ttk.Checkbutton(checks, text="允许读屏（OCR）", variable=self.var_screen).pack(side="left")
+        ttk.Checkbutton(checks, text="允许读屏（OCR）", variable=self.var_screen).pack(side="left", padx=(0, 18))
+        ttk.Checkbutton(checks, text="夜间自主", variable=self.var_night).pack(side="left", padx=(0, 18))
+        ttk.Checkbutton(checks, text="分享到 QQ", variable=self.var_share).pack(side="left", padx=(0, 18))
+        ttk.Checkbutton(checks, text="推送日记摘要", variable=self.var_diary_push).pack(side="left")
 
         actions = ttk.Frame(frame, padding=(0, 10))
         actions.pack(fill="x")
@@ -628,6 +660,53 @@ class DafeiyuApp(tk.Tk):
             if text:
                 log.info(text)
 
+    def _build_diary(self, notebook: ttk.Notebook) -> None:
+        frame = ttk.Frame(notebook, padding=14)
+        notebook.add(frame, text="日记")
+        top = ttk.Frame(frame)
+        top.pack(fill="x", pady=(0, 8))
+        ttk.Label(top, text="给主人的信 / 私人日记（按天追加）", foreground="#666").pack(side="left")
+        ttk.Button(top, text="刷新", command=self.refresh_diary).pack(side="right")
+        ttk.Button(top, text="打开目录", command=self.open_diary_dir).pack(side="right", padx=6)
+
+        panes = ttk.PanedWindow(frame, orient="horizontal")
+        panes.pack(fill="both", expand=True)
+        left = ttk.LabelFrame(panes, text="给主人的信", padding=6)
+        right = ttk.LabelFrame(panes, text="私人日记", padding=6)
+        panes.add(left, weight=1)
+        panes.add(right, weight=1)
+        self.diary_owner_text = scrolledtext.ScrolledText(
+            left, wrap="word", font=("SF Mono", 12), padx=8, pady=6
+        )
+        self.diary_owner_text.pack(fill="both", expand=True)
+        self.diary_private_text = scrolledtext.ScrolledText(
+            right, wrap="word", font=("SF Mono", 12), padx=8, pady=6
+        )
+        self.diary_private_text.pack(fill="both", expand=True)
+        self.refresh_diary()
+
+    def _diary_store(self) -> DiaryStore:
+        try:
+            config = Config.from_env(require_llm=False)
+            return DiaryStore(config.diary_dir)
+        except ConfigError:
+            return DiaryStore(APP_HOME / "diary")
+
+    def refresh_diary(self) -> None:
+        store = self._diary_store()
+        for widget, kind in (
+            (self.diary_owner_text, "owner"),
+            (self.diary_private_text, "private"),
+        ):
+            text = store.read(kind) or "（还没有日记）"
+            widget.configure(state="normal")
+            widget.delete("1.0", "end")
+            widget.insert("1.0", text)
+            widget.configure(state="disabled")
+
+    def open_diary_dir(self) -> None:
+        subprocess.Popen(["open", str(self._diary_store().directory)])
+
     def _build_logs(self, notebook: ttk.Notebook) -> None:
         frame = ttk.Frame(notebook, padding=10)
         notebook.add(frame, text="日志")
@@ -683,6 +762,13 @@ class DafeiyuApp(tk.Tk):
         self.var_screen.set(config.screen_read_enabled)
         self.var_skill_keywords.set(", ".join(config.learning_keywords))
         self.var_cookie.set(config.bili_cookie)
+        self.var_night.set(config.night_enabled)
+        self.var_night_windows.set(config.night_windows)
+        self.var_night_wakes.set(str(config.night_wakes))
+        self.var_night_skip.set(f"{config.night_skip_chance:g}")
+        self.var_share.set(config.share_enabled)
+        self.var_share_min_score.set(str(config.share_min_score))
+        self.var_diary_push.set(config.diary_push)
         self._persona_path = Path(config.persona_file)
         log.info("配置已载入：%s", APP_HOME / ".env")
 
@@ -691,6 +777,22 @@ class DafeiyuApp(tk.Tk):
         if owner and not owner.isdigit():
             messagebox.showerror("配置错误", "主人 QQ 必须是数字")
             return False
+        try:
+            wakes_value = int(self.var_night_wakes.get().strip() or "1")
+            skip_value = float(self.var_night_skip.get().strip() or "0.3")
+            score_value = int(self.var_share_min_score.get().strip() or "13")
+        except ValueError:
+            messagebox.showerror("配置错误", "醒来次数 / 跳过概率 / 分享最低分需要是数字")
+            return False
+        if not 0 <= skip_value <= 1:
+            messagebox.showerror("配置错误", "跳过概率需要在 0~1 之间")
+            return False
+        if not 0 <= score_value <= 20:
+            messagebox.showerror("配置错误", "分享最低分需要在 0~20 之间")
+            return False
+        wakes_text = str(max(0, min(wakes_value, 12)))
+        skip_text = f"{skip_value:g}"
+        score_text = str(score_value)
         updates = {
             "LLM_API_KEY": self.var_api_key.get().strip(),
             "LLM_MODEL": self.var_model.get().strip(),
@@ -707,6 +809,13 @@ class DafeiyuApp(tk.Tk):
             "SCREEN_READ_ENABLED": "true" if self.var_screen.get() else "false",
             "LEARNING_KEYWORDS": self.var_skill_keywords.get().strip(),
             "BILI_COOKIE": self.var_cookie.get().strip(),
+            "NIGHT_ENABLED": "true" if self.var_night.get() else "false",
+            "NIGHT_WINDOWS": self.var_night_windows.get().strip() or "20:00-24:00",
+            "NIGHT_WAKES": wakes_text,
+            "NIGHT_SKIP_CHANCE": skip_text,
+            "SHARE_ENABLED": "true" if self.var_share.get() else "false",
+            "SHARE_MIN_SCORE": score_text,
+            "DIARY_PUSH": "true" if self.var_diary_push.get() else "false",
         }
         set_env_values(APP_HOME / ".env", updates)
         log.info("配置已保存")

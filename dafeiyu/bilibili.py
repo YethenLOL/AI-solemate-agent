@@ -8,8 +8,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import math
 import re
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
@@ -17,6 +19,7 @@ from urllib.parse import urlencode
 import httpx
 
 from .config import DEFAULT_UA
+from .traffic import TrafficGuard
 
 BVID_RE = re.compile(r"(BV[0-9A-Za-z]{10})")
 AID_RE = re.compile(r"(?:^|[/\s])av(\d+)", re.IGNORECASE)
@@ -77,6 +80,21 @@ class HistoryItem:
             "duration": format_duration(self.duration),
             "watched_seconds": self.progress,
             "viewed_at": time.strftime("%Y-%m-%d %H:%M", time.localtime(self.view_at)) if self.view_at else "",
+        }
+
+
+@dataclass(slots=True)
+class DanmakuSummary:
+    total: int = 0
+    duration: int = 0
+    per_minute: list[int] = field(default_factory=list)
+    hot: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "总数": self.total,
+            "每分钟": self.per_minute,
+            "热点": self.hot,
         }
 
 
@@ -180,8 +198,10 @@ class BilibiliClient:
         timeout: float = 15.0,
         http_client: httpx.AsyncClient | None = None,
         risk_retry_delays: tuple[float, ...] = RISK_RETRY_DELAYS,
+        traffic: TrafficGuard | None = None,
     ) -> None:
         self.cookie = cookie.strip()
+        self.traffic = traffic
         self.user_agent = user_agent
         self.risk_retry_delays = tuple(max(delay, 0.0) for delay in risk_retry_delays)
         self.min_interval = max(min_interval, 0.0)
@@ -273,16 +293,21 @@ class BilibiliClient:
         if referer:
             headers["Referer"] = referer
 
+        if self.traffic is not None:
+            await self.traffic.acquire("read")
         async with self._lock:
             wait = self.min_interval - (time.monotonic() - self._last_request)
             if wait > 0:
                 await asyncio.sleep(wait)
             try:
-                return await self._client.get(API_ROOT + path, params=params, headers=headers)
+                response = await self._client.get(API_ROOT + path, params=params, headers=headers)
             except httpx.HTTPError as exc:
                 raise BiliError(f"请求 B 站失败：{exc}") from exc
             finally:
                 self._last_request = time.monotonic()
+        if self.traffic is not None:
+            self.traffic.note_response("read", response.status_code)
+        return response
 
     async def _ensure_buvid(self) -> None:
         """匿名请求也需要 buvid3/4，否则搜索接口只返回风控凭证。"""
@@ -485,7 +510,12 @@ class BilibiliClient:
         return comments
 
     async def watch(
-        self, id_or_url: str, *, comment_limit: int = 6, subtitle_chars: int = 1500
+        self,
+        id_or_url: str,
+        *,
+        comment_limit: int = 6,
+        subtitle_chars: int = 1500,
+        include_danmaku: bool = False,
     ) -> dict[str, Any]:
         """「看视频」：标题、简介、标签，加上最高赞评论和（登录时）字幕。"""
         video = await self.video(id_or_url)
@@ -499,7 +529,49 @@ class BilibiliClient:
         subtitle = await self._subtitle(video, max_chars=subtitle_chars)
         if subtitle:
             result["字幕节选"] = subtitle
+        if include_danmaku:
+            try:
+                summary = await self.danmaku(video)
+            except (BiliError, ValueError):
+                summary = DanmakuSummary()
+            if summary.total:
+                result["弹幕"] = summary.to_dict()
         return result
+
+    async def danmaku(self, id_or_url: Any) -> DanmakuSummary:
+        """拉弹幕并按分钟统计热区；不需要登录。"""
+        video = id_or_url if isinstance(id_or_url, Video) else await self.video(id_or_url)
+        if not video.cid and video.bvid:
+            try:
+                video = await self.video(video.bvid)
+            except BiliError:
+                return DanmakuSummary()
+        if not video.cid:
+            return DanmakuSummary()
+        if self.traffic is not None:
+            await self.traffic.acquire("read")
+        async with self._lock:
+            wait = self.min_interval - (time.monotonic() - self._last_request)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                response = await self._client.get(
+                    API_ROOT + "/x/v1/dm/list.so",
+                    params={"oid": video.cid},
+                    headers={
+                        "User-Agent": self.user_agent,
+                        "Referer": video.url,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                raise BiliError(f"拉弹幕失败：{exc}") from exc
+            finally:
+                self._last_request = time.monotonic()
+        if self.traffic is not None:
+            self.traffic.note_response("read", response.status_code)
+        if response.status_code != 200:
+            raise BiliError(f"弹幕接口返回 HTTP {response.status_code}")
+        return summarize_danmaku(response.content, duration=video.duration)
 
     async def _fill_tags(self, video: Video) -> None:
         try:
@@ -598,3 +670,60 @@ class BilibiliClient:
         if len(self._video_cache) > 200:
             for key in list(self._video_cache)[:50]:
                 self._video_cache.pop(key, None)
+
+
+def summarize_danmaku(payload: bytes | str, *, duration: int = 0) -> DanmakuSummary:
+    """把 B 站弹幕 XML 汇总成「每分钟密度 + 热点片段」。"""
+    text = payload.decode("utf-8", errors="replace") if isinstance(payload, bytes) else payload
+    if not text.strip():
+        return DanmakuSummary(duration=duration)
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return DanmakuSummary(duration=duration)
+
+    entries: list[tuple[float, str]] = []
+    for node in root.iter("d"):
+        raw = node.get("p") or ""
+        try:
+            at = float(raw.split(",", 1)[0])
+        except (ValueError, IndexError):
+            continue
+        content = (node.text or "").strip()
+        if content:
+            entries.append((at, content))
+    if not entries:
+        return DanmakuSummary(duration=duration)
+
+    longest = max(at for at, _ in entries)
+    minutes = int(math.ceil(duration / 60)) if duration else int(math.ceil(longest / 60)) + 1
+    minutes = max(1, min(minutes, 360))
+    per_minute = [0] * minutes
+    buckets: dict[int, list[str]] = {}
+    for at, content in entries:
+        index = min(int(at // 60), minutes - 1)
+        per_minute[index] += 1
+        buckets.setdefault(index, []).append(content)
+
+    hot: list[dict[str, Any]] = []
+    ranked = sorted(range(len(per_minute)), key=lambda index: per_minute[index], reverse=True)
+    for index in ranked[:3]:
+        count = per_minute[index]
+        if count <= 0:
+            continue
+        seen: list[str] = []
+        for content in buckets.get(index, []):
+            if content not in seen:
+                seen.append(content)
+            if len(seen) >= 5:
+                break
+        hot.append(
+            {
+                "开始秒": index * 60,
+                "结束秒": min((index + 1) * 60, duration or (index + 1) * 60),
+                "弹幕数": count,
+                "代表弹幕": seen,
+            }
+        )
+    hot.sort(key=lambda item: item["开始秒"])
+    return DanmakuSummary(total=len(entries), duration=duration, per_minute=per_minute, hot=hot)

@@ -77,6 +77,8 @@ class Router:
             log.info("忽略未授权消息：%s %s", message.user_id, message.text[:40])
             return
 
+        if self._is_owner(message.user_id) and not message.is_group:
+            self.memory.set_state("last_owner_message_at", time.time())
         self._record_stickers(message)
         text = self._strip_wake_word(message)
         if not text:
