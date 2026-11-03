@@ -1,0 +1,17 @@
+[Unit]
+Description=Dafeiyu QQ bot (OneBot v11)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 改成实际路径和运行用户
+WorkingDirectory=/opt/dafeiyu-qq
+ExecStart=/opt/dafeiyu-qq/.venv/bin/python -m dafeiyu
+User=root
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

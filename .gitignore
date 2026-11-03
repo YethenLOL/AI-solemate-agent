@@ -1,0 +1,30 @@
+.env
+.env.*
+!.env.example
+data/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# macOS app build artifacts
+build/
+dist/
+*.spec
+*.app
+*.zip
+assets/Dafeiyu.iconset/
+assets/Dafeiyu.icns
+
+# local logs
+*.log
+
+# generated at runtime: learned skill cards and local OCR helper
+skills/*.md
+bin/
+
+# packaging metadata
+*.egg-info/
+logs/
+dsh-workspace/

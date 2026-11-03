@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dafeiyu-qq"
+version = "1.1.0"
+description = "A self-hosted AI companion for QQ with Bilibili browsing, long-term memory, proactive chat, and a macOS control panel."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Dafeiyu contributors" }]
+keywords = ["qq", "onebot", "napcat", "bilibili", "ai-companion", "deepseek", "macos"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: MacOS X",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+]
+dependencies = [
+    "httpx>=0.27",
+    "websockets>=12",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+app = ["pyinstaller>=6.10", "pillow>=10"]
+
+[project.scripts]
+dafeiyu = "dafeiyu.app:main"
+dafeiyu-gui = "dafeiyu.gui:main"
+
+[project.urls]
+Homepage = "https://github.com/YethenLOL/AI-solemate-agent"
+Repository = "https://github.com/YethenLOL/AI-solemate-agent"
+Issues = "https://github.com/YethenLOL/AI-solemate-agent/issues"
+
+[tool.setuptools]
+packages = ["dafeiyu"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

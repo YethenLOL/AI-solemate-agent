@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a reproducible problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste API keys, tokens, cookies, QQ numbers, or private chat logs.
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "e.g. macOS 15.6 / Apple Silicon"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python / app version
+      placeholder: "Python 3.13.5, Dafeiyu 1.0.0"
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - QQ / NapCat connection
+        - Bilibili tools
+        - Persona
+        - Memory
+        - Proactive chat
+        - macOS app / computer tools
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs (redacted)
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed API keys, tokens, cookies, QQ numbers, and private chat content.
+          required: true
+        - label: I searched existing issues.
+          required: true
