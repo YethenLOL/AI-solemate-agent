@@ -193,6 +193,14 @@ class Config:
     night_deep_read: int = 2
     night_initial_delay: float = 45.0
 
+    # 抽帧看画面（需要 ffmpeg）
+    frames_enabled: bool = True
+    frames_count: int = 3
+    frames_max_width: int = 720
+    frames_timeout: float = 60.0
+    frames_ocr_max_chars: int = 2000
+    ffmpeg_path: str = ""
+
     # 分享 / 日记
     share_enabled: bool = True
     share_min_score: int = 13
@@ -302,6 +310,12 @@ class Config:
             night_max_videos=_as_int(env, "NIGHT_MAX_VIDEOS", 5),
             night_deep_read=_as_int(env, "NIGHT_DEEP_READ", 2),
             night_initial_delay=_as_float(env, "NIGHT_INITIAL_DELAY", 45.0),
+            frames_enabled=_as_bool(env, "FRAMES_ENABLED", True),
+            frames_count=_as_int(env, "FRAMES_COUNT", 3),
+            frames_max_width=_as_int(env, "FRAMES_MAX_WIDTH", 720),
+            frames_timeout=_as_float(env, "FRAMES_TIMEOUT", 60.0),
+            frames_ocr_max_chars=_as_int(env, "FRAMES_OCR_MAX_CHARS", 2000),
+            ffmpeg_path=_get(env, "FFMPEG_PATH", "") or "",
             share_enabled=_as_bool(env, "SHARE_ENABLED", True),
             share_min_score=_as_int(env, "SHARE_MIN_SCORE", 13),
             share_daily_limit=_as_int(env, "SHARE_DAILY_LIMIT", 3),
@@ -392,6 +406,10 @@ class Config:
         self.night_min_gap_minutes = max(1, min(self.night_min_gap_minutes, 180))
         self.night_max_videos = max(1, min(self.night_max_videos, 20))
         self.night_deep_read = max(1, min(self.night_deep_read, 5))
+        self.frames_count = max(1, min(self.frames_count, 6))
+        self.frames_max_width = max(320, min(self.frames_max_width, 1920))
+        self.frames_timeout = max(10.0, min(self.frames_timeout, 180.0))
+        self.frames_ocr_max_chars = max(200, min(self.frames_ocr_max_chars, 8000))
         self.share_min_score = max(0, min(self.share_min_score, 20))
         self.share_daily_limit = max(0, min(self.share_daily_limit, 10))
         self.silent_after_days = max(1, min(self.silent_after_days, 60))

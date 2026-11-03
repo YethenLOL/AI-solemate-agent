@@ -23,6 +23,7 @@ from .bilibili import BilibiliClient, BiliError, DanmakuSummary, Video
 from .config import Config
 from .dayplan import complete_plan, make_plan, parse_windows, plan_text
 from .diary import DiaryStore
+from .frames import FrameGrabber, pick_timestamps
 from .llm import LLMClient
 from .memory import Memory
 from .onebot import OneBotClient
@@ -95,6 +96,7 @@ class NightLoop:
         llm: LLMClient,
         skills: SkillStore,
         diary: DiaryStore,
+        frames: FrameGrabber | None = None,
         initial_delay: float | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -106,6 +108,7 @@ class NightLoop:
         self.llm = llm
         self.skills = skills
         self.diary = diary
+        self.frames = frames
         self.initial_delay = config.night_initial_delay if initial_delay is None else initial_delay
         self.clock = clock
 
@@ -303,6 +306,27 @@ class NightLoop:
             )
         except BiliError as exc:
             log.warning("深读 %s 失败：%s", video.bvid, exc)
+        if self.frames is not None and self.frames.available:
+            try:
+                source = await self.bili.play_url(video)
+                stamps = pick_timestamps(
+                    item.get("danmaku").hot if item.get("danmaku") else [],
+                    video.duration,
+                    self.config.frames_count,
+                )
+                frame_result = await self.frames.read_frames(
+                    source, stamps, referer=video.url
+                )
+                if frame_result.text:
+                    details["画面文字"] = frame_result.text
+                log.info(
+                    "抽帧 %s：%d 张，OCR %d 字",
+                    video.bvid,
+                    frame_result.count,
+                    len(frame_result.text),
+                )
+            except Exception as exc:
+                log.info("抽帧失败 %s：%s", video.bvid, exc)
         return {**item, "details": details}
 
     async def score_videos(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:

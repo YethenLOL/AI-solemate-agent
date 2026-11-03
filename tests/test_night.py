@@ -7,6 +7,7 @@ from typing import Any
 from dafeiyu.bilibili import DanmakuSummary, Video
 from dafeiyu.config import Config
 from dafeiyu.diary import DiaryStore
+from dafeiyu.frames import FrameReadResult
 from dafeiyu.llm import LLMResponse
 from dafeiyu.memory import Memory
 from dafeiyu.night import NightLoop
@@ -37,6 +38,9 @@ class FakeBili:
             per_minute=[total],
             hot=[{"开始秒": 60, "结束秒": 120, "弹幕数": total, "代表弹幕": ["来了"]}],
         )
+
+    async def play_url(self, video: Video) -> str:
+        return f"https://cdn.example/{video.bvid}.mp4"
 
     async def watch(self, bvid: str, **kwargs: Any) -> dict[str, Any]:
         return {
@@ -96,7 +100,26 @@ def make_config(tmp_path: Path, **overrides: Any) -> Config:
     return Config(**defaults)
 
 
-def make_loop(tmp_path: Path, bili: FakeBili, llm: FakeLLM, bot: FakeBot, memory: Memory) -> NightLoop:
+class FakeFrames:
+    available = True
+
+    def __init__(self, text: str = "画面里的板书：先装依赖") -> None:
+        self.text = text
+        self.calls: list[tuple[str, list[float]]] = []
+
+    async def read_frames(self, source, timestamps, *, referer=""):
+        self.calls.append((str(source), list(timestamps)))
+        return FrameReadResult(count=len(timestamps), text=self.text)
+
+
+def make_loop(
+    tmp_path: Path,
+    bili: FakeBili,
+    llm: FakeLLM,
+    bot: FakeBot,
+    memory: Memory,
+    frames=None,
+) -> NightLoop:
     config = make_config(tmp_path)
     store = SkillStore(config.skills_dir)
     store.create(
@@ -113,6 +136,7 @@ def make_loop(tmp_path: Path, bili: FakeBili, llm: FakeLLM, bot: FakeBot, memory
         llm=llm,  # type: ignore[arg-type]
         skills=store,
         diary=DiaryStore(config.diary_dir),
+        frames=frames,
     )
 
 
@@ -176,4 +200,19 @@ async def test_low_score_is_not_shared(tmp_path: Path) -> None:
 
     assert result.shared_bvid == ""
     assert not any("BVlow0001" in text for _, text in bot.sent)
+    memory.close()
+
+
+async def test_deep_read_includes_frame_ocr(tmp_path: Path) -> None:
+    memory = Memory(tmp_path / "test.db").connect()
+    bili = FakeBili([Video(bvid="BVframe01", title="Python 教程", duration=600)], counts={"BVframe01": 50})
+    frames = FakeFrames()
+    loop = make_loop(tmp_path, bili, FakeLLM(), FakeBot(), memory, frames=frames)
+
+    ranked = await loop.rank_videos(bili.videos)
+    deep = await loop.deep_read(ranked[0])
+
+    assert deep["details"]["画面文字"] == "画面里的板书：先装依赖"
+    assert frames.calls and frames.calls[0][0] == "https://cdn.example/BVframe01.mp4"
+    assert frames.calls[0][1] == [65.0]  # 弹幕热点 60s 开始后 5 秒
     memory.close()

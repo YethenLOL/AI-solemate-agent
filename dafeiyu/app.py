@@ -23,6 +23,7 @@ from .config import APP_HOME, Config, ConfigError
 from .dayplan import plan_text
 from .diary import DiaryStore
 from .dsh import DSHClient
+from .frames import FrameGrabber
 from .learning import LearningLoop
 from .llm import LLMClient
 from .memory import Memory
@@ -130,12 +131,22 @@ def build_components(config: Config) -> dict[str, object]:
         skills=skills,
         screen=screen,
     )
+    frames = FrameGrabber(
+        enabled=config.frames_enabled,
+        ffmpeg=config.ffmpeg_path,
+        user_agent=config.bili_user_agent,
+        cache_dir=config.skills_dir.parent / "bin",
+        max_width=config.frames_max_width,
+        timeout=config.frames_timeout,
+        ocr_max_chars=config.frames_ocr_max_chars,
+        screen=screen,
+    )
     activity = ActivityMonitor(config=config, memory=memory, computer=computer)
     bot = OneBotClient(url=config.onebot_ws_url, token=config.onebot_token)
     scheduler = ProactiveScheduler(config=config, agent=agent, bot=bot, memory=memory)
     browse = BrowseLoop(config=config, bili=bili, memory=memory)
     learning = LearningLoop(
-        config=config, bili=bili, llm=learning_llm, memory=memory, skills=skills
+        config=config, bili=bili, llm=learning_llm, memory=memory, skills=skills, frames=frames
     )
     diary = DiaryStore(config.diary_dir)
     night = NightLoop(
@@ -147,6 +158,7 @@ def build_components(config: Config) -> dict[str, object]:
         llm=learning_llm,
         skills=skills,
         diary=diary,
+        frames=frames,
     )
     router = Router(
         config=config,
@@ -171,6 +183,7 @@ def build_components(config: Config) -> dict[str, object]:
         "learning": learning,
         "night": night,
         "diary": diary,
+        "frames": frames,
         "traffic": traffic,
         "activity": activity,
         "bot": bot,
@@ -191,6 +204,7 @@ async def run_app(config: Config, *, stop_event: asyncio.Event | None = None) ->
     learning: LearningLoop = parts["learning"]  # type: ignore[assignment]
     night: NightLoop = parts["night"]  # type: ignore[assignment]
     diary: DiaryStore = parts["diary"]  # type: ignore[assignment]
+    frames: FrameGrabber = parts["frames"]  # type: ignore[assignment]
     learning_llm = parts["learning_llm"]
     chat_llm = parts["chat_llm"]
     activity: ActivityMonitor = parts["activity"]  # type: ignore[assignment]
@@ -220,6 +234,7 @@ async def run_app(config: Config, *, stop_event: asyncio.Event | None = None) ->
         config.share_daily_limit,
     )
     log.info("日记目录：%s；当前计划：%s", diary.directory, plan_text(night.current_plan() or None))
+    log.info("抽帧看画面：%s", frames.status())
     if dsh_client := (learning_llm if isinstance(learning_llm, DSHClient) else None):
         log.info("DSH 学习运行时：%s", dsh_client.status())
     if config.dsh_chat and isinstance(chat_llm, DSHClient):
@@ -379,12 +394,23 @@ async def _learning_action(config: Config, action) -> bool:
         if config.dsh_enabled
         else llm
     )
+    frames = FrameGrabber(
+        enabled=config.frames_enabled,
+        ffmpeg=config.ffmpeg_path,
+        user_agent=config.bili_user_agent,
+        cache_dir=config.skills_dir.parent / "bin",
+        max_width=config.frames_max_width,
+        timeout=config.frames_timeout,
+        ocr_max_chars=config.frames_ocr_max_chars,
+        screen=ScreenReader(enabled=True, cache_dir=config.skills_dir.parent / "bin"),
+    )
     loop = LearningLoop(
         config=config,
         bili=bili,
         llm=learning_llm,
         memory=memory,
         skills=SkillStore(config.skills_dir),
+        frames=frames,
     )
     try:
         result = await action(loop)

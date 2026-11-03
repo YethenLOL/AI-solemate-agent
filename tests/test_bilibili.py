@@ -464,3 +464,55 @@ def test_summarize_danmaku_buckets_and_hotspots() -> None:
 def test_summarize_danmaku_handles_bad_payload() -> None:
     assert summarize_danmaku("not xml").total == 0
     assert summarize_danmaku("").total == 0
+
+
+async def test_play_url_prefers_mp4() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/x/web-interface/nav":
+            return httpx.Response(
+                200,
+                json={
+                    "code": -101,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": f"https://i0.hdslb.com/bfs/wbi/{IMG_KEY}.png",
+                            "sub_url": f"https://i0.hdslb.com/bfs/wbi/{SUB_KEY}.png",
+                        }
+                    },
+                },
+            )
+        if request.url.path == "/x/web-interface/view":
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "bvid": "BV1xx411c7mD",
+                        "aid": 111,
+                        "cid": 999,
+                        "title": "t",
+                        "desc": "d",
+                        "pic": "",
+                        "owner": {"mid": 1, "name": "u"},
+                        "stat": {},
+                        "duration": 600,
+                        "pages": [{"cid": 999}],
+                    },
+                },
+            )
+        if request.url.path == "/x/tag/archive/tags":
+            return httpx.Response(200, json={"code": 0, "data": []})
+        if request.url.path == "/x/player/wbi/playurl":
+            return httpx.Response(
+                200, json={"code": 0, "data": {"durl": [{"url": "https://cdn.example/v.mp4"}]}}
+            )
+        raise AssertionError(request.url)
+
+    client, http_client = make_client(handler)
+    try:
+        url = await client.play_url("BV1xx411c7mD")
+    finally:
+        await client.aclose()
+        await http_client.aclose()
+
+    assert url == "https://cdn.example/v.mp4"

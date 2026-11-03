@@ -573,6 +573,40 @@ class BilibiliClient:
             raise BiliError(f"弹幕接口返回 HTTP {response.status_code}")
         return summarize_danmaku(response.content, duration=video.duration)
 
+    async def play_url(self, id_or_url: Any) -> str:
+        """取一个可直接给 ffmpeg 用的播放地址（优先 MP4，其次 DASH）。"""
+        video = id_or_url if isinstance(id_or_url, Video) else await self.video(id_or_url)
+        if not video.cid and video.bvid:
+            video = await self.video(video.bvid)
+        if not video.cid or not video.bvid:
+            raise BiliError("拿不到视频 cid，无法解析播放地址")
+
+        last_error: Exception | None = None
+        for quality in (64, 32, 16):
+            try:
+                data = await self._request(
+                    "/x/player/wbi/playurl",
+                    {
+                        "bvid": video.bvid,
+                        "cid": video.cid,
+                        "qn": quality,
+                        "fnval": 1,
+                        "fourk": 0,
+                    },
+                    signed=True,
+                    referer=video.url,
+                    allow_codes=(-404, -10403),
+                )
+            except BiliError as exc:
+                last_error = exc
+                continue
+            url = extract_play_url(data.get("data") or {})
+            if url:
+                return url
+        if last_error is not None:
+            raise BiliError(f"解析播放地址失败：{last_error}")
+        raise BiliError("解析播放地址失败（可能需要重新登录 B 站）")
+
     async def _fill_tags(self, video: Video) -> None:
         try:
             data = await self._request("/x/tag/archive/tags", {"bvid": video.bvid})
@@ -670,6 +704,20 @@ class BilibiliClient:
         if len(self._video_cache) > 200:
             for key in list(self._video_cache)[:50]:
                 self._video_cache.pop(key, None)
+
+
+def extract_play_url(payload: dict[str, Any]) -> str:
+    for item in payload.get("durl") or []:
+        url = (item or {}).get("url")
+        if url:
+            return str(url)
+    dash = payload.get("dash") or {}
+    videos = dash.get("video") or []
+    for item in videos:
+        url = (item or {}).get("baseUrl") or (item or {}).get("base_url")
+        if url:
+            return str(url)
+    return ""
 
 
 def summarize_danmaku(payload: bytes | str, *, duration: int = 0) -> DanmakuSummary:

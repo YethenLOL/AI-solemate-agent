@@ -9,6 +9,7 @@ from dafeiyu.bilibili import HistoryItem, Video
 from dafeiyu.config import Config
 from dafeiyu.learning import LearningLoop
 from dafeiyu.llm import LLMResponse
+from dafeiyu.frames import FrameReadResult
 from dafeiyu.memory import Memory
 from dafeiyu.skills import SkillStore
 
@@ -75,7 +76,12 @@ class FakeBili:
         return self.items[:limit]
 
     async def watch(
-        self, video_id: str, *, comment_limit: int = 6, subtitle_chars: int = 1500
+        self,
+        video_id: str,
+        *,
+        comment_limit: int = 6,
+        subtitle_chars: int = 1500,
+        include_danmaku: bool = False,
     ) -> dict[str, Any]:
         return {
             "video": {
@@ -85,6 +91,9 @@ class FakeBili:
             },
             "热门评论": [{"text": "讲得清楚"}],
         }
+
+    async def play_url(self, video: Any) -> str:
+        return "https://cdn.example/v.mp4"
 
     async def hot(self, limit: int = 20) -> list:
         return []
@@ -407,4 +416,36 @@ async def test_redistill_keeps_old_card_when_skipped(tmp_path: Path) -> None:
     assert result.ok and "跳过 1" in result.message
     kept = store.get(skill.id)
     assert kept is not None and kept.content == original
+    memory.close()
+
+
+class FakeFrames:
+    available = True
+
+    def __init__(self, text: str = "画面里的代码：print('hello')") -> None:
+        self.text = text
+
+    async def read_frames(self, source, timestamps, *, referer=""):
+        return FrameReadResult(count=len(timestamps), text=self.text)
+
+
+async def test_learning_includes_frame_ocr_in_prompt(tmp_path: Path) -> None:
+    memory = Memory(":memory:").connect()
+    store = SkillStore(tmp_path / "skills")
+    llm = FakeLLM([SKILL_JSON])
+    loop = LearningLoop(
+        config=make_config(tmp_path, bili_cookie=""),
+        bili=FakeBili([]),  # type: ignore[arg-type]
+        llm=llm,  # type: ignore[arg-type]
+        memory=memory,
+        skills=store,
+        frames=FakeFrames(),  # type: ignore[arg-type]
+    )
+
+    result = await loop.learn_url("https://www.bilibili.com/video/BV1manual01")
+
+    assert result.ok and store.count() == 1
+    prompt = llm.calls[0]["messages"][1]["content"]
+    assert "画面文字" in prompt
+    assert "print('hello')" in prompt
     memory.close()

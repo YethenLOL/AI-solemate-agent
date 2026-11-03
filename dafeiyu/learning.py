@@ -12,6 +12,7 @@ from typing import Any, Iterable
 
 from .bilibili import BilibiliClient, BiliError, HistoryItem
 from .config import Config
+from .frames import FrameGrabber, pick_timestamps
 from .llm import LLMClient, LLMError
 from .memory import Memory
 from .skills import Skill, SkillStore
@@ -223,6 +224,7 @@ class LearningLoop:
         llm: LLMClient,
         memory: Memory,
         skills: SkillStore,
+        frames: FrameGrabber | None = None,
         initial_delay: float = 60.0,
     ) -> None:
         self.config = config
@@ -230,6 +232,7 @@ class LearningLoop:
         self.llm = llm
         self.memory = memory
         self.skills = skills
+        self.frames = frames
         self.initial_delay = initial_delay
 
     async def run(self) -> None:
@@ -449,9 +452,30 @@ class LearningLoop:
     async def _learn_one(self, item: HistoryItem) -> Skill | None:
         details: dict[str, Any] = {}
         try:
-            details = await self.bili.watch(item.bvid, comment_limit=5, subtitle_chars=6000)
+            details = await self.bili.watch(
+                item.bvid, comment_limit=5, subtitle_chars=6000, include_danmaku=True
+            )
         except BiliError as exc:
             log.info("读取 %s 详情失败：%s", item.bvid, exc)
+
+        if self.frames is not None and self.frames.available:
+            try:
+                source = await self.bili.play_url(item.bvid)
+                hot = (details.get("弹幕") or {}).get("热点") or []
+                stamps = pick_timestamps(hot, item.duration or 600, self.config.frames_count)
+                frame_result = await self.frames.read_frames(
+                    source, stamps, referer=item.url
+                )
+                if frame_result.text:
+                    details["画面文字"] = frame_result.text
+                log.info(
+                    "抽帧 %s：%d 张，OCR %d 字",
+                    item.bvid,
+                    frame_result.count,
+                    len(frame_result.text),
+                )
+            except Exception as exc:
+                log.info("抽帧失败 %s：%s", item.bvid, exc)
 
         data = await self._distill(item, details)
         if data is None:

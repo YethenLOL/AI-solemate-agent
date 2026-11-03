@@ -131,6 +131,11 @@ class ScreenReader:
             raise ScreenError("OCR 编译失败")
         return binary
 
+    async def ocr_file(self, image_path: str | Path) -> str:
+        """对任意本地图片做 OCR（抽帧看画面复用同一套 Vision 工具）。"""
+        binary = await self._ensure_ocr_binary()
+        return await self._run(str(binary), str(image_path))
+
     def _check_private(self, app: str, window: str) -> None:
         haystack = f"{app} {window}".lower()
         if any(word and word in haystack for word in self.private_words):

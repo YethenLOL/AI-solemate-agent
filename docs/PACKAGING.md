@@ -11,12 +11,29 @@ open dist/Dafeiyu.app
 `scripts/build_app.sh`:
 
 1. installs `requirements-app.txt` (PyInstaller + Pillow);
-2. generates `assets/Dafeiyu.iconset`/`Dafeiyu.icns`;
+2. generates `assets/Dafeiyu.iconset`/`Dafeiyu.icns`（默认用 `scripts/make_icon.py` 画鱼；把 1024×1024 的 PNG 放到 `assets/icon-source.png` 就会改用你自己的图）;
 3. runs PyInstaller in windowed mode with `personas/` and `.env.example` bundled;
 4. sets bundle name/version;
 5. ad-hoc signs the app.
 
 Output: `dist/Dafeiyu.app` (Apple Silicon when built on arm64).
+
+## Change the app icon
+
+1. 准备一张 **1024×1024 PNG**（方形，建议四周留一点透明边）。
+2. 保存为 `assets/icon-source.png`。
+3. 重新构建：
+
+   ```bash
+   bash scripts/build_app.sh
+   open dist/Dafeiyu.app
+   ```
+
+脚本会自动裁成正方形、套上 macOS 圆角并生成 `assets/Dafeiyu.icns`。
+
+> 也可以直接改 `scripts/make_icon.py` 里的 `draw_icon()` 绘制代码（默认那只鱼的配色和形状都在那里）。
+>
+> Dock/Finder 有图标缓存：换完图标如果还显示旧的，退出 App 再重开；仍然旧的话注销重登，或手动执行 `killall Dock`。
 
 ## Where user data lives
 

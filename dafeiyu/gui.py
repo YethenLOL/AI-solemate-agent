@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +42,7 @@ from .config import APP_HOME as CONFIG_HOME
 from .config import Config, ConfigError
 from .dayplan import plan_text
 from .diary import DiaryStore
+from .frames import find_ffmpeg
 from .llm import LLMClient
 from .memory import Memory
 from .persona import PersonaCard, build_system_prompt
@@ -186,6 +188,8 @@ class DafeiyuApp(tk.Tk):
         self.var_share = tk.BooleanVar(value=True)
         self.var_share_min_score = tk.StringVar(value="13")
         self.var_diary_push = tk.BooleanVar(value=True)
+        self.var_frames = tk.BooleanVar(value=True)
+        self.var_frames_status = tk.StringVar(value="")
         self.var_night_status = tk.StringVar(value="")
         self.var_usage_period = tk.StringVar(value="day")
         self.var_usage_total = tk.StringVar(value="—")
@@ -230,6 +234,9 @@ class DafeiyuApp(tk.Tk):
         self.btn_stop = ttk.Button(buttons, text="■ 停止", command=self.stop_bot, state="disabled")
         self.btn_stop.pack(side="left", padx=8)
         ttk.Button(buttons, text="刷新状态", command=self.refresh_status).pack(side="left", padx=8)
+        ttk.Button(buttons, text="立刻醒一次", command=self.force_night_round).pack(
+            side="left", padx=8
+        )
         ttk.Button(buttons, text="打开 NapCat WebUI", command=self.open_webui).pack(side="left", padx=8)
         ttk.Button(buttons, text="NapCat 安装器", command=self.open_installer).pack(side="left", padx=8)
 
@@ -383,6 +390,40 @@ class DafeiyuApp(tk.Tk):
         self.refresh_night_status()
         self.after(30_000, self._usage_tick)
 
+    def force_night_round(self) -> None:
+        try:
+            config = Config.from_env(require_llm=False)
+            if not config.night_enabled:
+                messagebox.showinfo("夜间自主已关闭", "先在配置里勾选「夜间自主」并保存")
+                return
+            memory = Memory(config.db_path).connect()
+            try:
+                now = time.time()
+                today = datetime.now().date().isoformat()
+                plan = {
+                    "schema": 1,
+                    "date": today,
+                    "wakes": 0,
+                    "woke_at": None,
+                    "used": {},
+                    "action": "wake",
+                    "fired": False,
+                    "at": now + 1,
+                    "ends_at": datetime.now().replace(hour=23, minute=59, second=0, microsecond=0).timestamp(),
+                    "window": config.night_windows,
+                    "window_key": f"{today}|{config.night_windows}",
+                    "at_text": datetime.fromtimestamp(now + 1).strftime("%Y-%m-%d %H:%M"),
+                    "reason": "",
+                }
+                memory.set_state("night_plan", plan)
+                memory.set_state("last_owner_message_at", now)
+            finally:
+                memory.close()
+            log.info("已安排下一分钟内醒一次（夜间流程）")
+            self.var_night_status.set("生物钟：下一分钟内醒一次…")
+        except Exception as exc:
+            messagebox.showerror("触发失败", str(exc))
+
     def refresh_night_status(self) -> None:
         try:
             config = Config.from_env(require_llm=False)
@@ -442,6 +483,7 @@ class DafeiyuApp(tk.Tk):
         ttk.Checkbutton(checks, text="DSH 作为聊天大脑", variable=self.var_dsh_chat).pack(side="left", padx=(0, 18))
         ttk.Checkbutton(checks, text="允许读屏（OCR）", variable=self.var_screen).pack(side="left", padx=(0, 18))
         ttk.Checkbutton(checks, text="夜间自主", variable=self.var_night).pack(side="left", padx=(0, 18))
+        ttk.Checkbutton(checks, text="抽帧看画面", variable=self.var_frames).pack(side="left", padx=(0, 18))
         ttk.Checkbutton(checks, text="分享到 QQ", variable=self.var_share).pack(side="left", padx=(0, 18))
         ttk.Checkbutton(checks, text="推送日记摘要", variable=self.var_diary_push).pack(side="left")
 
@@ -450,12 +492,15 @@ class DafeiyuApp(tk.Tk):
         ttk.Button(actions, text="保存配置", command=self.save_config).pack(side="left")
         ttk.Button(actions, text="测试模型 + B 站", command=self.run_check).pack(side="left", padx=8)
 
+        ttk.Label(frame, textvariable=self.var_frames_status, foreground="#777").pack(
+            anchor="w", pady=(10, 0)
+        )
         ttk.Label(
             frame,
             text=f"配置文件：{APP_HOME / '.env'}\n人格卡：{APP_HOME / 'personas' / 'dafeiyu.md'}",
             foreground="#777",
             justify="left",
-        ).pack(anchor="w", pady=(14, 0))
+        ).pack(anchor="w", pady=(6, 0))
 
     def _build_persona(self, notebook: ttk.Notebook) -> None:
         frame = ttk.Frame(notebook, padding=14)
@@ -769,6 +814,11 @@ class DafeiyuApp(tk.Tk):
         self.var_share.set(config.share_enabled)
         self.var_share_min_score.set(str(config.share_min_score))
         self.var_diary_push.set(config.diary_push)
+        self.var_frames.set(config.frames_enabled)
+        ffmpeg = find_ffmpeg(config.ffmpeg_path)
+        self.var_frames_status.set(
+            f"抽帧：{ffmpeg}" if ffmpeg else "抽帧：未找到 ffmpeg（brew install ffmpeg）"
+        )
         self._persona_path = Path(config.persona_file)
         log.info("配置已载入：%s", APP_HOME / ".env")
 
@@ -816,6 +866,7 @@ class DafeiyuApp(tk.Tk):
             "SHARE_ENABLED": "true" if self.var_share.get() else "false",
             "SHARE_MIN_SCORE": score_text,
             "DIARY_PUSH": "true" if self.var_diary_push.get() else "false",
+            "FRAMES_ENABLED": "true" if self.var_frames.get() else "false",
         }
         set_env_values(APP_HOME / ".env", updates)
         log.info("配置已保存")

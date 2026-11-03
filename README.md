@@ -113,7 +113,7 @@ dafeiyu-qq/
 │   └── config.py       # .env 配置
 ├── personas/dafeiyu.md # 可热更新的人格卡
 ├── tests/              # 116 个单元/集成测试
-├── assets/icon.png     # App 图标
+├── assets/icon.png     # App 图标（换图见 docs/PACKAGING.md）
 ├── docs/               # 架构、打包、隐私说明
 ├── deploy/dafeiyu.service
 ├── scripts/setup.sh
@@ -219,7 +219,7 @@ ONEBOT_ACCESS_TOKEN=和NapCat里一致的token
 
 1. 在 `.env` 里填 `BILI_COOKIE`（至少包含 `SESSDATA`）。
 2. 保持 `LEARNING_ENABLED=true`，奥米每隔 `LEARNING_INTERVAL_MINUTES` 分钟读取一次你的观看历史。
-3. 只处理观看超过 `LEARNING_MIN_WATCH_SECONDS` 秒、且没有学过的视频；读取标题、简介、标签、热评和（有权限时的）字幕。
+3. 只处理观看超过 `LEARNING_MIN_WATCH_SECONDS` 秒、且没有学过的视频；读取标题、简介、标签、热评、弹幕热点、画面文字（ffmpeg 抽帧 + OCR）和（有权限时的）字幕。
 4. 调用模型做「技能蒸馏」，输出结构化 JSON 并渲染成可执行技能卡，保存到 `skills/`。每张卡固定包含：**需要的工具**（类型 / 安装方式 / 链接）、**用到的网站**、前置条件、**操作步骤**（含可执行命令）、验证方式、易错点、参考资料；工具名和链接还会写进 frontmatter，方便检索。纯娱乐或没有可复用操作的视频会跳过。
 5. 你私聊提到相关话题时，奥米会自动带上匹配的技能摘要；需要细节时她会调用 `skill_search` / `skill_read`，再按技能里的步骤用 `computer` 工具帮你操作。
 
@@ -259,12 +259,13 @@ GUI 的「技能」页也提供「手动学习」：可以直接粘贴 B 站视�
 | 醒来 | 在 `NIGHT_WINDOWS` 里随机挑时刻；每次计划都会持久化，重启不重抽 |
 | 今天不想看 | `NIGHT_SKIP_CHANCE`（默认 30%）直接跳过浏览，**两本日记照写** |
 | 选题 | 先拉热门+排行榜，按「偏好命中（技能触发词/工具名/长期记忆）+ 弹幕密度」排序，**不看播放量** |
-| 深读 | 前 `NIGHT_DEEP_READ` 条读字幕、热评、弹幕热点（每分钟密度 + 代表弹幕） |
+| 深读 | 前 `NIGHT_DEEP_READ` 条读字幕、热评、弹幕热点（每分钟密度 + 代表弹幕）；装了 ffmpeg 还会在热点处**抽帧 + 本机 OCR 读画面文字** |
 | 评分 | 模型按 0–20 打分，附 ≥8 字理由；**只考虑第 1 名** |
 | 分享 | `SHARE_MIN_SCORE`（默认 13）以上才发到主人 QQ；每天 ≤3 条；同一 BV 7 天一次 |
 | 沉默衰减 | 主人 3 天没回应 → 每天最多 1 条；7 天 → 完全不分享，但日记照写 |
 | 日记 | `diary/owner.md`（给主人的信）和 `diary/private.md`（私人日记），按天追加；可推摘要到 QQ |
 | 请求保护 | 读 600/时·3000/天，写 12/时·30/天；412 按 5/10/20/30 分钟递增暂停，状态在 `data/traffic.json` |
+| 抽帧看画面 | `brew install ffmpeg` 后自动启用；在弹幕热点截帧（默认 720px），用 macOS Vision OCR 读板书/代码/界面文字 |
 
 相关配置（完整见 [.env.example](.env.example)）：
 
@@ -280,7 +281,9 @@ SHARE_DAILY_LIMIT=3
 DIARY_PUSH=true
 ```
 
-GUI 里新增了「日记」页，可以直接看两本日记；「概览」会显示「下次醒来 …」。
+GUI 里新增了「日记」页，可以直接看两本日记；「概览」会显示「下次醒来 …」；「配置」里可以开关「抽帧看画面」并看到 ffmpeg 路径。
+
+> 抽帧依赖 ffmpeg：`brew install ffmpeg`（没装也能跑，只是少这一路画面信息）。OCR 复用本机 macOS Vision，不上传图片。
 
 ### 怎么监看奥米有没有在学
 

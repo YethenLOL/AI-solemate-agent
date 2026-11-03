@@ -5,6 +5,9 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
 ICONSET = ASSETS / "Dafeiyu.iconset"
+# 想换成自己的图：把 1024×1024 的 PNG 放到 assets/icon-source.png，
+# 再重新构建即可；没有这个文件时用下面代码画的默认大肥鱼。
+SOURCE = ASSETS / "icon-source.png"
 
 BG = (10, 18, 32, 255)
 BODY = (255, 179, 71, 255)
@@ -14,7 +17,32 @@ DARK = (20, 24, 35, 255)
 BLUE = (77, 171, 247, 255)
 
 
+def _rounded(image: Image.Image, radius: int = 220) -> Image.Image:
+    size = image.size[0]
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=255)
+    rounded = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    rounded.paste(image, (0, 0), mask)
+    return rounded
+
+
+def _load_source() -> Image.Image | None:
+    if not SOURCE.is_file():
+        return None
+    image = Image.open(SOURCE).convert("RGBA")
+    width, height = image.size
+    side = min(width, height)
+    left = (width - side) // 2
+    top = (height - side) // 2
+    image = image.crop((left, top, left + side, top + side)).resize((1024, 1024), Image.LANCZOS)
+    return _rounded(image)
+
+
 def draw_icon(size: int) -> Image.Image:
+    source = _load_source()
+    if source is not None:
+        return source.resize((size, size), Image.LANCZOS)
+
     scale = size / 1024
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -64,14 +92,17 @@ def main() -> None:
     ASSETS.mkdir(exist_ok=True)
     ICONSET.mkdir(exist_ok=True)
     sizes = [16, 32, 64, 128, 256, 512, 1024]
+    source = _load_source()
     for size in sizes:
-        image = draw_icon(size)
+        image = (
+            source.resize((size, size), Image.LANCZOS) if source is not None else draw_icon(size)
+        )
         image.save(ICONSET / f"icon_{size}x{size}.png")
         if size <= 512:
             image.save(ICONSET / f"icon_{size}x{size}@2x.png")
-    base = draw_icon(1024)
+    base = source if source is not None else draw_icon(1024)
     base.save(ASSETS / "icon.png")
-    print("PNG icons written")
+    print("PNG icons written" + ("（来自 icon-source.png）" if source is not None else ""))
 
 
 if __name__ == "__main__":
